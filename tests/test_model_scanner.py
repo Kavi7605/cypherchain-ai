@@ -2,7 +2,8 @@ import os
 import tempfile
 import hashlib
 import pytest
-import model_scanner  # This imports your existing model_scanner.py
+from src import model_scanner
+
 
 def create_temp_file_with_content(content: bytes):
     """Helper function to create a temporary file with given bytes content."""
