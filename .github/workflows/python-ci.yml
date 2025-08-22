@@ -42,7 +42,7 @@ jobs:
         run: safety check --json > safety_report.json || true
 
       - name: Upload Safety Vulnerability Report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: safety-report
           path: safety_report.json
@@ -58,7 +58,7 @@ jobs:
           python src/mitre_atlas_integration.py "${{ steps.gather_threats.outputs.threats }}" > mitre_atlas_report.txt
 
       - name: Upload MITRE ATLAS Report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: mitre-atlas-report
           path: mitre_atlas_report.txt
