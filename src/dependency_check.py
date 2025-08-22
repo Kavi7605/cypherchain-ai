@@ -1,5 +1,6 @@
 import subprocess
 import json
+import sys
 
 def run_safety_scan():
     try:
@@ -9,15 +10,15 @@ def run_safety_scan():
             text=True,
             check=True
         )
-        # Print output for debugging
+        # Print short output for debugging
         print("Raw safety scan output:", result.stdout[:500])
-
         # Parse JSON
         data = json.loads(result.stdout)
-
-        # Work with JSON data keys
+        print("\nDependency Security Scan Report")
+        print("="*50)
         print("Scan metadata:", data.get("meta", {}))
         vulnerabilities = data.get("vulnerabilities", [])
+
         if vulnerabilities:
             print(f"Found {len(vulnerabilities)} vulnerabilities.")
             for v in vulnerabilities:
@@ -32,5 +33,24 @@ def run_safety_scan():
         print("Could not parse JSON output:", e)
         print("Raw output was:", result.stdout)
 
+def scan_installed_packages_for_typosquatting():
+    import pkg_resources
+    common_packages = {'numpy', 'pandas', 'requests', 'scipy', 'torch'}
+    installed = [dist.project_name for dist in pkg_resources.working_set]
+    typosquats = []
+    for pkg in installed:
+        for common in common_packages:
+            # If a package name is similar to a common package but not exact, flag it (simple similarity)
+            if pkg.lower() != common and pkg.lower().startswith(common):
+                typosquats.append(pkg)
+    if typosquats:
+        print("Possible typosquatting/impersonation threats in installed packages:")
+        for pkg in typosquats:
+            print(f"  - {pkg}")
+    else:
+        print("No typosquatting patterns detected among installed packages.")
+
 if __name__ == "__main__":
     run_safety_scan()
+    print("\n--- Additional Checks ---")
+    scan_installed_packages_for_typosquatting()
