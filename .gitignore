@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Ignore the resnet101-5d3b4d8f.pth file
+/models/resnet101-5d3b4d8f.pth
