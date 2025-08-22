@@ -63,13 +63,15 @@ def get_file_info(file_path):
             data = f.read(100*1024)  # Read first 100KB for speed
         mean_entropy = entropy(data)
         suspicious = scan_for_suspicious_patterns(file_path)
-        notes = []
-        if ext == ".pkl":
-            notes.append("HIGH RISK: Pickle can execute arbitrary Python code! Only load from trusted sources.")
-        if mean_entropy > 7.5:
-            notes.append(f"High entropy ({mean_entropy:.2f}) detected: possible steganography or encrypted threat.")
-        if suspicious:
-            notes.append(f"Suspicious binary strings detected: {suspicious}")
+        notes = {
+            "File Type": model_type,
+            "Entropy": f"{mean_entropy:.2f} (High risk if >7.5)",
+            "Pattern Matches": suspicious,
+            "Actionable Insights": [
+                "Consider validating the model's integrity (e.g., with a trusted file hash).",
+                "Manually inspect for trojans or backdoors if patterns match sensitive keywords."
+            ],
+        }
         return {
             "type": model_type,
             "size_bytes": size,
