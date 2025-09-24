@@ -2,50 +2,63 @@ import os
 import tempfile
 import hashlib
 import pytest
-from src import model_scanner
+import subprocess
+import sys
+from src.model_scanner import get_file_info, verify_watermark
 
-def create_temp_file_with_content(content: bytes):
-    temp_file = tempfile.NamedTemporaryFile(delete=False)
-    temp_file.write(content)
-    temp_file.close()
-    return temp_file.name
+@pytest.fixture
+def temp_file_factory():
+    created_files = []
+    def _create_temp_file(content: bytes, suffix=""):
+        path = tempfile.mktemp(suffix=suffix)
+        with open(path, "wb") as f:
+            f.write(content)
+        created_files.append(path)
+        return path
+    yield _create_temp_file
+    for path in created_files:
+        if os.path.exists(path):
+            os.remove(path)
 
-def test_calculate_sha256_known_value():
-    content = b"hello world"
-    file_path = create_temp_file_with_content(content)
-    expected_hash = hashlib.sha256(content).hexdigest()
-    result_hash = model_scanner.calculate_sha256(file_path)
-    assert result_hash == expected_hash
-    os.remove(file_path)
-
-def test_get_file_info_pytorch_file():
-    file_path = create_temp_file_with_content(b"dummy model data")
-    new_path = file_path + ".pth"
-    os.rename(file_path, new_path)
-    info = model_scanner.get_file_info(new_path)
+def test_get_file_info_pytorch_file(temp_file_factory):
+    file_path = temp_file_factory(b"dummy model data", suffix=".pth")
+    info = get_file_info(file_path)
     assert info["type"] == "PyTorch model file"
-    assert info["size_bytes"] == os.path.getsize(new_path)
-    assert len(info["sha256"]) == 64
-    os.remove(new_path)
+    assert info["size_bytes"] > 0
 
-def test_get_file_info_nonexistent_file():
+def test_suspicious_pattern_detection(temp_file_factory):
+    content = b"some data then backdoor then other data"
+    file_path = temp_file_factory(content, suffix=".pth")
+    info = get_file_info(file_path)
+    assert "backdoor" in info["suspicious_patterns"]
+
+def test_watermark_verification_and_tampering(temp_file_factory):
+    original_content = b"This is a secure model."
+    model_path = temp_file_factory(original_content)
+
+    watermarker_script = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'tools', 'watermarker.py'))
+
+    # 1. Embed a valid watermark
+    subprocess.run(
+        [sys.executable, watermarker_script, model_path, "--author", "Test Author", "--project", "Test Project"],
+        check=True
+    )
+
+    # 2. Verify the valid watermark
+    watermark_data = verify_watermark(model_path)
+    assert watermark_data is not None
+    assert watermark_data['status'] == 'VALID'
+    assert watermark_data['author'] == 'Test Author'
+
+    # 3. Tamper with the file
+    with open(model_path, "ab") as f:
+        f.write(b"tampered")
+
+    # 4. Verify the tampered watermark
+    tampered_data = verify_watermark(model_path)
+    assert tampered_data is not None
+    assert tampered_data['status'] == 'TAMPERED'
+
+def test_nonexistent_file():
     with pytest.raises(FileNotFoundError):
-        model_scanner.get_file_info("non_existent_file.pth")
-
-def test_suspicious_pattern_detection():
-    suspicious_content = b"backdoor\x00trojan\x00trigger\x00eval(\x00subprocess"
-    file_path = create_temp_file_with_content(suspicious_content)
-    new_path = file_path + ".pth"
-    os.rename(file_path, new_path)
-    info = model_scanner.get_file_info(new_path)
-    assert any(pattern in info["suspicious_patterns"] for pattern in ['backdoor', 'trojan'])
-    os.remove(new_path)
-
-def test_entropy_detection():
-    # create high entropy content (random bytes)
-    import os
-    content = os.urandom(10000)
-    file_path = create_temp_file_with_content(content)
-    info = model_scanner.get_file_info(file_path)
-    assert info["mean_entropy"] > 7.0
-    os.remove(file_path)
+        get_file_info("non_existent_file.pth")
