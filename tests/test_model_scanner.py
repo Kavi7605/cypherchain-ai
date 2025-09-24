@@ -59,4 +59,3 @@ def test_watermark_verification_and_tampering(temp_file_factory):
 def test_nonexistent_file():
     with pytest.raises(FileNotFoundError):
         get_file_info("non_existent_file.pth")
-
