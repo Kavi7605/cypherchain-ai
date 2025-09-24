@@ -4,14 +4,12 @@ import os
 import re
 
 def parse_requirements(file_path):
-    """Parses package names from a requirements.txt file."""
     packages = set()
     try:
         with open(file_path, 'r') as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith('#'):
-                    # Match package name, ignoring version specifiers
                     match = re.match(r"^[a-zA-Z0-9\-_]+", line)
                     if match:
                         packages.add(match.group(0).lower())
@@ -20,13 +18,17 @@ def parse_requirements(file_path):
     return packages
 
 def run_safety_check(requirements_path):
-    """Runs 'safety check' on a given requirements.txt file."""
     report_lines = ["--- Dependency Vulnerability Report (safety) ---"]
     try:
         result = subprocess.run(
             ["safety", "check", "-r", requirements_path, "--json"],
             capture_output=True, text=True
         )
+
+        if not result.stdout.strip():
+            report_lines.append("✅ No known security vulnerabilities found.")
+            return "\n".join(report_lines)
+
         data = json.loads(result.stdout)
         vulnerabilities = data.get("vulnerabilities", [])
 
@@ -45,7 +47,6 @@ def run_safety_check(requirements_path):
         return f"Error: Could not parse scan results.\nRaw output:\n{result.stdout}"
 
 def check_for_typosquatting(packages):
-    """Checks a set of package names for common typosquatting patterns."""
     report_lines = ["\n--- Typosquatting & Impersonation Check ---"]
     common_packages = {'numpy', 'pandas', 'requests', 'scipy', 'torch', 'tensorflow', 'scikit-learn', 'matplotlib', 'pillow'}
     potential_typos = []
@@ -53,7 +54,7 @@ def check_for_typosquatting(packages):
     for pkg_name in packages:
         for common in common_packages:
             if pkg_name != common and (common in pkg_name or pkg_name in common):
-                potential_typos.append(f"'{pkg_name}' is very similar to the common package '{common}'. Please verify it is not a typosquatting attempt.")
+                 potential_typos.append(f"'{pkg_name}' is very similar to the common package '{common}'. Please verify it is not a typosquatting attempt.")
 
     if potential_typos:
         report_lines.append("⚠️ Potential typosquatting threats found:")
@@ -63,7 +64,6 @@ def check_for_typosquatting(packages):
     return "\n".join(report_lines)
 
 def scan_project_dependencies(project_path):
-    """The main function to scan dependencies in a target project folder."""
     requirements_file = os.path.join(project_path, 'requirements.txt')
 
     if not os.path.exists(requirements_file):
@@ -78,11 +78,72 @@ def scan_project_dependencies(project_path):
         typo_report = "Could not perform typosquatting check."
 
     return f"{safety_report}\n{typo_report}"
+```eof
 
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) < 2:
-        print("Usage: python dependency_check.py <path_to_project_folder>")
-        sys.exit(1)
-    folder_path = sys.argv[1]
-    print(scan_project_dependencies(folder_path))
+---
+
+### `tests/test_model_scanner.py`
+
+```python:tests/test_model_scanner.py
+import os
+import tempfile
+import hashlib
+import pytest
+import subprocess
+import sys
+from src.model_scanner import get_file_info, verify_watermark
+
+@pytest.fixture
+def temp_file_factory():
+    created_files = []
+    def _create_temp_file(content: bytes, suffix=""):
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        temp_file.write(content)
+        temp_file.close()
+        created_files.append(temp_file.name)
+        return temp_file.name
+    yield _create_temp_file
+    for path in created_files:
+        if os.path.exists(path):
+            os.remove(path)
+
+def test_get_file_info_pytorch_file(temp_file_factory):
+    file_path = temp_file_factory(b"dummy model data", suffix=".pth")
+    info = get_file_info(file_path)
+    assert info["type"] == "PyTorch model file"
+    assert info["size_bytes"] > 0
+
+def test_suspicious_pattern_detection(temp_file_factory):
+    content = b"some data then backdoor then other data"
+    file_path = temp_file_factory(content, suffix=".pth")
+    info = get_file_info(file_path)
+    assert "backdoor" in info["suspicious_patterns"]
+
+def test_watermark_verification_and_tampering(temp_file_factory):
+    original_content = b"This is a secure model."
+    model_path = temp_file_factory(original_content)
+
+    watermarker_script = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'tools', 'watermarker.py'))
+
+    subprocess.run(
+        [sys.executable, watermarker_script, model_path, "--author", "Test Author", "--project", "Test Project"],
+        check=True
+    )
+
+    watermark_data = verify_watermark(model_path)
+    assert watermark_data is not None
+    assert watermark_data['status'] == 'VALID'
+    assert watermark_data['author'] == 'Test Author'
+
+    with open(model_path, "r+b") as f:
+        f.seek(0)
+        f.write(b'X')
+
+    tampered_data = verify_watermark(model_path)
+    assert tampered_data is not None
+    assert tampered_data['status'] == 'TAMPERED'
+
+def test_nonexistent_file():
+    with pytest.raises(FileNotFoundError):
+        get_file_info("non_existent_file.pth")
+```eof

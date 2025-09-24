@@ -10,11 +10,11 @@ from src.model_scanner import get_file_info, verify_watermark
 def temp_file_factory():
     created_files = []
     def _create_temp_file(content: bytes, suffix=""):
-        path = tempfile.mktemp(suffix=suffix)
-        with open(path, "wb") as f:
-            f.write(content)
-        created_files.append(path)
-        return path
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        temp_file.write(content)
+        temp_file.close()
+        created_files.append(temp_file.name)
+        return temp_file.name
     yield _create_temp_file
     for path in created_files:
         if os.path.exists(path):
@@ -38,23 +38,20 @@ def test_watermark_verification_and_tampering(temp_file_factory):
 
     watermarker_script = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'tools', 'watermarker.py'))
 
-    # 1. Embed a valid watermark
     subprocess.run(
         [sys.executable, watermarker_script, model_path, "--author", "Test Author", "--project", "Test Project"],
         check=True
     )
 
-    # 2. Verify the valid watermark
     watermark_data = verify_watermark(model_path)
     assert watermark_data is not None
     assert watermark_data['status'] == 'VALID'
     assert watermark_data['author'] == 'Test Author'
 
-    # 3. Tamper with the file
-    with open(model_path, "ab") as f:
-        f.write(b"tampered")
+    with open(model_path, "r+b") as f:
+        f.seek(0)
+        f.write(b'X')
 
-    # 4. Verify the tampered watermark
     tampered_data = verify_watermark(model_path)
     assert tampered_data is not None
     assert tampered_data['status'] == 'TAMPERED'
@@ -62,3 +59,4 @@ def test_watermark_verification_and_tampering(temp_file_factory):
 def test_nonexistent_file():
     with pytest.raises(FileNotFoundError):
         get_file_info("non_existent_file.pth")
+
