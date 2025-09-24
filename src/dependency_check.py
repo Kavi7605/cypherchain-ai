@@ -1,56 +1,88 @@
 import subprocess
 import json
-import sys
+import os
+import re
 
-def run_safety_scan():
+def parse_requirements(file_path):
+    """Parses package names from a requirements.txt file."""
+    packages = set()
+    try:
+        with open(file_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    # Match package name, ignoring version specifiers
+                    match = re.match(r"^[a-zA-Z0-9\-_]+", line)
+                    if match:
+                        packages.add(match.group(0).lower())
+    except FileNotFoundError:
+        return None
+    return packages
+
+def run_safety_check(requirements_path):
+    """Runs 'safety check' on a given requirements.txt file."""
+    report_lines = ["--- Dependency Vulnerability Report (safety) ---"]
     try:
         result = subprocess.run(
-            ["safety", "scan", "--output", "json"],
-            capture_output=True,
-            text=True,
-            check=True
+            ["safety", "check", "-r", requirements_path, "--json"],
+            capture_output=True, text=True
         )
-        # Print short output for debugging
-        print("Raw safety scan output:", result.stdout[:500])
-        # Parse JSON
         data = json.loads(result.stdout)
-        print("\nDependency Security Scan Report")
-        print("="*50)
-        print("Scan metadata:", data.get("meta", {}))
         vulnerabilities = data.get("vulnerabilities", [])
 
         if vulnerabilities:
-            print(f"Found {len(vulnerabilities)} vulnerabilities.")
+            report_lines.append(f"Found {len(vulnerabilities)} vulnerabilities:")
             for v in vulnerabilities:
-                print(f"Package: {v.get('package_name', '')} {v.get('package_version', '')}")
-                print(f"Advisory: {v.get('advisory_id', '')} Severity: {v.get('severity', '')}")
-                print(f"Description: {v.get('advisory_description', '')}\n")
+                report_lines.append(f"\nPackage: {v.get('package_name', '')} == {v.get('vulnerable_spec', '')}")
+                report_lines.append(f"  Affected Versions: {v.get('affected_versions', '')}")
+                report_lines.append(f"  Advisory: {v.get('advisory_summary', '')}")
         else:
-            print("No vulnerabilities found.")
-    except subprocess.CalledProcessError as e:
-        print("Error during safety scan:", e)
-    except json.JSONDecodeError as e:
-        print("Could not parse JSON output:", e)
-        print("Raw output was:", result.stdout)
+            report_lines.append("✅ No known security vulnerabilities found.")
+        return "\n".join(report_lines)
+    except FileNotFoundError:
+        return "Error: 'safety' command not found. Please run 'pip install safety'."
+    except json.JSONDecodeError:
+        return f"Error: Could not parse scan results.\nRaw output:\n{result.stdout}"
 
-def scan_installed_packages_for_typosquatting():
-    import pkg_resources
-    common_packages = {'numpy', 'pandas', 'requests', 'scipy', 'torch'}
-    installed = [dist.project_name for dist in pkg_resources.working_set]
-    typosquats = []
-    for pkg in installed:
+def check_for_typosquatting(packages):
+    """Checks a set of package names for common typosquatting patterns."""
+    report_lines = ["\n--- Typosquatting & Impersonation Check ---"]
+    common_packages = {'numpy', 'pandas', 'requests', 'scipy', 'torch', 'tensorflow', 'scikit-learn', 'matplotlib', 'pillow'}
+    potential_typos = []
+
+    for pkg_name in packages:
         for common in common_packages:
-            # If a package name is similar to a common package but not exact, flag it (simple similarity)
-            if pkg.lower() != common and pkg.lower().startswith(common):
-                typosquats.append(pkg)
-    if typosquats:
-        print("Possible typosquatting/impersonation threats in installed packages:")
-        for pkg in typosquats:
-            print(f"  - {pkg}")
+            if pkg_name != common and (common in pkg_name or pkg_name in common):
+                potential_typos.append(f"'{pkg_name}' is very similar to the common package '{common}'. Please verify it is not a typosquatting attempt.")
+
+    if potential_typos:
+        report_lines.append("⚠️ Potential typosquatting threats found:")
+        report_lines.extend([f"  - {p}" for p in potential_typos])
     else:
-        print("No typosquatting patterns detected among installed packages.")
+        report_lines.append("✅ No common typosquatting patterns detected.")
+    return "\n".join(report_lines)
+
+def scan_project_dependencies(project_path):
+    """The main function to scan dependencies in a target project folder."""
+    requirements_file = os.path.join(project_path, 'requirements.txt')
+
+    if not os.path.exists(requirements_file):
+        return f"Error: 'requirements.txt' not found in the selected folder:\n{project_path}"
+
+    safety_report = run_safety_check(requirements_file)
+
+    packages = parse_requirements(requirements_file)
+    if packages is not None:
+        typo_report = check_for_typosquatting(packages)
+    else:
+        typo_report = "Could not perform typosquatting check."
+
+    return f"{safety_report}\n{typo_report}"
 
 if __name__ == "__main__":
-    run_safety_scan()
-    print("\n--- Additional Checks ---")
-    scan_installed_packages_for_typosquatting()
+    import sys
+    if len(sys.argv) < 2:
+        print("Usage: python dependency_check.py <path_to_project_folder>")
+        sys.exit(1)
+    folder_path = sys.argv[1]
+    print(scan_project_dependencies(folder_path))

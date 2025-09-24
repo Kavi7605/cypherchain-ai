@@ -1,127 +1,211 @@
+import sys
+import os
+import traceback
+import subprocess
+import json
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from PySide6.QtWidgets import (
-    QApplication, QPushButton, QVBoxLayout, QWidget,
-    QTextEdit, QFileDialog, QLabel, QFrame, QHBoxLayout
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+    QTextEdit, QLabel, QFileDialog, QInputDialog, QMessageBox
 )
 from PySide6.QtGui import QFont
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
+
+from src.model_scanner import get_file_info as scan_model_file
+from src.dataset_scanner import get_file_info as scan_dataset_file
+from src.dependency_check import scan_project_dependencies
+from src.mitre_atlas_integration import MITREAtlasIntegration
+
+class ScanWorker(QThread):
+    result_ready = Signal(object)
+    error_occurred = Signal(str)
+
+    def __init__(self, function, *args):
+        super().__init__()
+        self.function = function
+        self.args = args
+
+    def run(self):
+        try:
+            result = self.function(*self.args)
+            self.result_ready.emit(result)
+        except Exception:
+            self.error_occurred.emit(traceback.format_exc())
 
 class ScannerGUI(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("CypherChain-AI Scanner")
-        self.resize(800, 600)
+        self.worker = None
+        self.mitre_mapper = MITREAtlasIntegration()
+        self.setup_ui()
 
-        # Main layout
-        main_layout = QVBoxLayout()
-        main_layout.setSpacing(20)
-        main_layout.setContentsMargins(20, 20, 20, 20)
+    def setup_ui(self):
+        self.setWindowTitle("CypherChain-AI Security Scanner")
+        self.resize(1100, 750)
+        self.setStyleSheet(self.get_stylesheet())
 
-        # Title
-        title = QLabel("CypherChain-AI Scanner")
-        title.setFont(QFont("Segoe UI", 18, QFont.Bold))
+        main_layout = QVBoxLayout(self)
+        title = QLabel("CypherChain-AI Security Scanner")
+        title.setFont(QFont("Segoe UI", 24, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(title)
 
-        # Button grid layout
         button_layout = QHBoxLayout()
-        desc_layout = QHBoxLayout()
+        self.model_button = QPushButton("Scan Model File...")
+        self.dataset_button = QPushButton("Scan Dataset File...")
+        self.deps_button = QPushButton("Scan Project Folder...")
+        self.watermark_button = QPushButton("Create Watermark...")
 
-        # Dependency Scanner
-        self.dep_button = QPushButton("Dependency Scanner")
-        self.dep_button.clicked.connect(self.run_dependency_scan)
-        self.style_button(self.dep_button)
-        button_layout.addWidget(self.dep_button)
+        self.model_button.clicked.connect(self.select_and_scan_model)
+        self.dataset_button.clicked.connect(self.select_and_scan_dataset)
+        self.deps_button.clicked.connect(self.select_and_scan_dependencies)
+        self.watermark_button.clicked.connect(self.create_watermark)
 
-        dep_desc = QLabel("Checks the code libraries for known security issues.")
-        dep_desc.setWordWrap(True)
-        dep_desc.setAlignment(Qt.AlignCenter)
-        desc_layout.addWidget(dep_desc)
-
-        # Model Scanner
-        self.model_button = QPushButton("Model Scanner")
-        self.model_button.clicked.connect(self.select_model_file)
-        self.style_button(self.model_button)
         button_layout.addWidget(self.model_button)
-
-        model_desc = QLabel("Verifies AI model files are authentic and tamper-free.")
-        model_desc.setWordWrap(True)
-        model_desc.setAlignment(Qt.AlignCenter)
-        desc_layout.addWidget(model_desc)
-
-        # Dataset Scanner
-        self.dataset_button = QPushButton("Dataset Scanner")
-        self.dataset_button.clicked.connect(self.select_dataset_file)
-        self.style_button(self.dataset_button)
         button_layout.addWidget(self.dataset_button)
-
-        dataset_desc = QLabel("Analyzes datasets for format, completeness, and corruption.")
-        dataset_desc.setWordWrap(True)
-        dataset_desc.setAlignment(Qt.AlignCenter)
-        desc_layout.addWidget(dataset_desc)
-
-        # Add layouts
+        button_layout.addWidget(self.deps_button)
+        button_layout.addWidget(self.watermark_button)
         main_layout.addLayout(button_layout)
-        main_layout.addLayout(desc_layout)
 
-        # Output log area (fills bottom space)
+        self.target_label = QLabel("Current Target: None")
+        self.target_label.setFont(QFont("Segoe UI", 10, italic=True))
+        main_layout.addWidget(self.target_label)
+
         self.output = QTextEdit()
         self.output.setReadOnly(True)
         self.output.setFont(QFont("Consolas", 11))
-        self.output.setStyleSheet("""
-            QTextEdit {
-                background-color: #1e1e1e;
-                color: #d4d4d4;
-                border-radius: 8px;
-                padding: 10px;
-            }
-        """)
-        main_layout.addWidget(self.output, stretch=1)
+        self.output.setPlaceholderText("Scan reports will be displayed here.")
+        main_layout.addWidget(self.output)
 
-        # Status bar
-        self.status = QLabel("Ready.")
-        self.status.setAlignment(Qt.AlignRight)
-        self.status.setStyleSheet("color: #aaa; font-size: 12px;")
-        main_layout.addWidget(self.status)
+        self.status_label = QLabel("Ready")
+        self.status_label.setAlignment(Qt.AlignRight)
+        main_layout.addWidget(self.status_label)
 
-        self.setLayout(main_layout)
+    def start_scan(self, function, path):
+        self.output.clear()
+        self.target_label.setText(f"Current Target: {os.path.basename(path)}")
+        self.log(f"Starting scan on: {path}")
+        self.set_buttons_enabled(False)
+        self.worker = ScanWorker(function, path)
+        self.worker.result_ready.connect(self.on_scan_complete)
+        self.worker.error_occurred.connect(self.on_scan_error)
+        self.worker.start()
 
-    def style_button(self, btn):
-        btn.setMinimumHeight(50)
-        btn.setStyleSheet("""
-            QPushButton {
-                background-color: #2e3b4e;
-                color: white;
-                border-radius: 8px;
-                font-size: 14px;
-                padding: 10px;
-            }
-            QPushButton:hover {
-                background-color: #44566c;
-            }
-        """)
+    def select_and_scan_model(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Select Model File", "", "Model Files (*.pt *.pth *.onnx *.pb *.pkl)")
+        if path:
+            self.start_scan(scan_model_file, path)
+
+    def select_and_scan_dataset(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Select Dataset File", "", "Data Files (*.csv *.json *.xlsx *.parquet *.zip)")
+        if path:
+            self.start_scan(scan_dataset_file, path)
+
+    def select_and_scan_dependencies(self):
+        path = QFileDialog.getExistingDirectory(self, "Select Project Folder")
+        if path:
+            self.start_scan(scan_project_dependencies, path)
+
+    def on_scan_complete(self, result):
+        if isinstance(result, str):
+            self.output.setText(result)
+        else:
+            self.output.setHtml(self.format_dict_report(result))
+        self.set_buttons_enabled(True)
+
+    def on_scan_error(self, error_msg):
+        self.output.setText(f"--- SCAN FAILED ---\n{error_msg}")
+        self.set_buttons_enabled(True)
+
+    def create_watermark(self):
+        model_path, _ = QFileDialog.getOpenFileName(self, "Select Model to Watermark", "", "Model Files (*.pt *.pth *.onnx *.pb *.pkl)")
+        if not model_path: return
+        author, ok1 = QInputDialog.getText(self, "Author", "Enter Author Name:")
+        if not ok1 or not author.strip(): return
+        project, ok2 = QInputDialog.getText(self, "Project", "Enter Project Name:")
+        if not ok2 or not project.strip(): return
+
+        watermarker_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'tools', 'watermarker.py'))
+
+        try:
+            self.status_label.setText("Creating watermark...")
+            QApplication.processEvents()
+            result = subprocess.run(
+                [sys.executable, watermarker_path, model_path, "--author", author, "--project", project],
+                capture_output=True, text=True, check=True
+            )
+            QMessageBox.information(self, "Success", f"Watermark created successfully!\n\nOutput:\n{result.stdout}")
+        except FileNotFoundError:
+            QMessageBox.critical(self, "Error", f"Could not find watermarker script at:\n{watermarker_path}")
+        except subprocess.CalledProcessError as e:
+            QMessageBox.critical(self, "Error", f"Failed to create watermark.\n\nError:\n{e.stderr}")
+        finally:
+            self.status_label.setText("Ready")
+
+    def set_buttons_enabled(self, enabled):
+        self.model_button.setEnabled(enabled)
+        self.dataset_button.setEnabled(enabled)
+        self.deps_button.setEnabled(enabled)
+        self.watermark_button.setEnabled(enabled)
+        self.status_label.setText("Ready" if enabled else "Scanning in background...")
 
     def log(self, message):
         self.output.append(message)
         self.output.ensureCursorVisible()
-        self.status.setText(message)
 
-    def run_dependency_scan(self):
-        self.log("Running Dependency Scanner...")
+    def format_dict_report(self, result):
+        html = ""
+        def format_value(val):
+            if isinstance(val, list) and val:
+                items = "".join([f"<li>{item}</li>" for item in val])
+                return f"<ul>{items}</ul>"
+            return str(val)
 
-    def select_model_file(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Select Model File", "", "Model Files (*.pt *.pth *.onnx)")
-        if path:
-            self.log(f"Selected model file: {path}")
-            self.log("Running Model Scanner...")
+        for key, value in result.items():
+            if value is None or (key == 'watermark' and value and value.get('status') == 'VALID'): continue
 
-    def select_dataset_file(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Select Dataset File", "", "Data Files (*.csv *.json *.xlsx *.parquet *.zip)")
-        if path:
-            self.log(f"Selected dataset file: {path}")
-            self.log("Running Dataset Scanner...")
+            formatted_key = key.replace("_", " ").title()
+            html += f"<h3>{formatted_key}</h3>"
+
+            if isinstance(value, dict):
+                for sub_key, sub_value in value.items():
+                    sub_key_fmt = sub_key.replace("_", " ").title()
+                    color = "#ff6b6b" if "CRITICAL" in str(sub_value) else ("#ffcc00" if "WARNING" in str(sub_value) else "#f0f0f0")
+                    html += f"<p style='color: {color};'><b>{sub_key_fmt}:</b> {format_value(sub_value)}</p>"
+            else:
+                html += f"<p>{format_value(value)}</p>"
+
+        threats = result.get('suspicious_patterns', []) + result.get('security_findings', [])
+        if result.get('watermark', {}):
+            if result.get('watermark').get('status') == 'TAMPERED':
+                threats.append('backdoor')
+
+        if threats:
+            mitre_report = self.mitre_mapper.generate_report(threats)
+            html += f"<h3>MITRE ATLAS Threat Mapping</h3><p>{mitre_report.replace(os.linesep, '<br>')}</p>"
+
+        return html
+
+    def get_stylesheet(self):
+        return """
+            QWidget { background-color: #2c313c; color: #f0f0f0; }
+            QPushButton { 
+                background-color: #568af2; color: white; border-radius: 8px;
+                font-size: 14px; font-weight: bold; padding: 12px; border: none;
+            }
+            QPushButton:hover { background-color: #6c9eff; }
+            QPushButton:disabled { background-color: #4a5568; color: #a0aec0; }
+            QTextEdit { 
+                background-color: #1a202c; border: 1px solid #4a5568; 
+                border-radius: 8px; padding: 10px;
+            }
+            QLabel { font-size: 14px; }
+        """
 
 if __name__ == "__main__":
-    app = QApplication([])
+    app = QApplication(sys.argv)
     window = ScannerGUI()
     window.show()
-    app.exec()
+    sys.exit(app.exec())
