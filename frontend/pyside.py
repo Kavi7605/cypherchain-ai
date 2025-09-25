@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt, QThread, Signal
 
 from src.model_scanner import get_file_info as scan_model_file
 from src.dataset_scanner import get_file_info as scan_dataset_file
-from src.dependency_check import scan_project_dependencies
+from src.dependency_check import scan_dependency_file
 from src.mitre_atlas_integration import MITREAtlasIntegration
 
 class ScanWorker(QThread):
@@ -55,7 +55,7 @@ class ScannerGUI(QWidget):
         button_layout = QHBoxLayout()
         self.model_button = QPushButton("Scan Model File...")
         self.dataset_button = QPushButton("Scan Dataset File...")
-        self.deps_button = QPushButton("Scan Project Folder...")
+        self.deps_button = QPushButton("Scan Dependency File...")
         self.watermark_button = QPushButton("Create Watermark...")
 
         self.model_button.clicked.connect(self.select_and_scan_model)
@@ -104,9 +104,9 @@ class ScannerGUI(QWidget):
             self.start_scan(scan_dataset_file, path)
 
     def select_and_scan_dependencies(self):
-        path = QFileDialog.getExistingDirectory(self, "Select Project Folder")
+        path, _ = QFileDialog.getOpenFileName(self, "Select Dependency File", "", "Requirements Files (requirements.txt)")
         if path:
-            self.start_scan(scan_project_dependencies, path)
+            self.start_scan(scan_dependency_file, path)
 
     def on_scan_complete(self, result):
         if isinstance(result, str):
@@ -179,7 +179,7 @@ class ScannerGUI(QWidget):
 
         threats = result.get('suspicious_patterns', []) + result.get('security_findings', [])
         if result.get('watermark', {}):
-            if result.get('watermark').get('status') == 'TAMPERED':
+             if result.get('watermark').get('status') == 'TAMPERED':
                 threats.append('backdoor')
 
         if threats:

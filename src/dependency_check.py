@@ -4,6 +4,7 @@ import os
 import re
 
 def parse_requirements(file_path):
+    """Parses package names from a requirements.txt file."""
     packages = set()
     try:
         with open(file_path, 'r') as f:
@@ -11,12 +12,14 @@ def parse_requirements(file_path):
                 line = line.strip()
                 if line and not line.startswith('#'):
                     match = re.match(r"^[a-zA-Z0-9\-_]+", line)
-                    if match: packages.add(match.group(0).lower())
+                    if match:
+                        packages.add(match.group(0).lower())
     except FileNotFoundError:
         return None
     return packages
 
 def run_safety_check(requirements_path):
+    """Runs 'safety check' on a given requirements.txt file."""
     report_lines = ["--- Dependency Vulnerability Report (safety) ---"]
     try:
         result = subprocess.run(
@@ -45,6 +48,7 @@ def run_safety_check(requirements_path):
     return "\n".join(report_lines)
 
 def check_for_typosquatting(packages):
+    """Checks a set of package names for common typosquatting patterns."""
     report_lines = ["\n--- Typosquatting & Impersonation Check ---"]
     common_packages = {'numpy', 'pandas', 'requests', 'scipy', 'torch', 'tensorflow', 'scikit-learn'}
     potential_typos = []
@@ -59,11 +63,21 @@ def check_for_typosquatting(packages):
         report_lines.append("✅ No common typosquatting patterns detected.")
     return "\n".join(report_lines)
 
-def scan_project_dependencies(project_path):
-    requirements_file = os.path.join(project_path, 'requirements.txt')
-    if not os.path.exists(requirements_file):
-        return f"Error: 'requirements.txt' not found in the selected folder:\n{project_path}"
-    safety_report = run_safety_check(requirements_file)
-    packages = parse_requirements(requirements_file)
+def scan_dependency_file(requirements_path):
+    """The main function to scan a specific requirements.txt file."""
+    if not os.path.exists(requirements_path):
+        return f"Error: File not found:\n{requirements_path}"
+
+    safety_report = run_safety_check(requirements_path)
+    packages = parse_requirements(requirements_path)
     typo_report = check_for_typosquatting(packages) if packages else ""
     return f"{safety_report}\n{typo_report}"
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) < 2:
+        print("Usage: python dependency_check.py <path_to_requirements.txt>")
+        sys.exit(1)
+    file_path = sys.argv[1]
+    print(scan_dependency_file(file_path))
+
