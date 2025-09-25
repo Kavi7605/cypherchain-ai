@@ -19,33 +19,53 @@ def parse_requirements(file_path):
     return packages
 
 def run_safety_check(requirements_path):
-    """Runs 'safety check' on a given requirements.txt file."""
+    """Runs 'safety check' and robustly extracts and parses the JSON output."""
     report_lines = ["--- Dependency Vulnerability Report (safety) ---"]
     try:
         result = subprocess.run(
             ["safety", "check", "-r", requirements_path, "--json"],
-            capture_output=True, text=True
+            capture_output=True, text=True, check=False
         )
-        if not result.stdout.strip():
-            report_lines.append("✅ No known security vulnerabilities found.")
-            return "\n".join(report_lines)
 
-        data = json.loads(result.stdout)
-        vulnerabilities = data.get("vulnerabilities", [])
-        if vulnerabilities:
-            report_lines.append(f"Found {len(vulnerabilities)} vulnerabilities:")
-            for v in vulnerabilities:
-                report_lines.append(f"\nPackage: {v.get('package_name', '')} == {v.get('vulnerable_spec', '')}")
-                report_lines.append(f"  Advisory: {v.get('advisory_summary', '')}")
-        else:
-            report_lines.append("✅ No known security vulnerabilities found.")
+        # Combine stdout and stderr to ensure we capture the full output
+        full_output = result.stdout + result.stderr
+
+        # --- FINAL FIX: Extract the JSON object from the surrounding text ---
+        try:
+            # Find the start and end of the JSON object
+            json_start = full_output.find('{')
+            json_end = full_output.rfind('}') + 1
+
+            if json_start != -1 and json_end != -1:
+                json_string = full_output[json_start:json_end]
+                data = json.loads(json_string)
+                vulnerabilities = data.get("vulnerabilities", [])
+
+                if vulnerabilities:
+                    report_lines.append(f"Found {len(vulnerabilities)} vulnerabilities:")
+                    for v in vulnerabilities:
+                        report_lines.append(f"\nPackage: {v.get('package_name', '')} == {v.get('vulnerable_spec', '')}")
+                        report_lines.append(f"  Advisory: {v.get('advisory_summary', '')}")
+                else:
+                    report_lines.append("✅ No known security vulnerabilities found.")
+            else:
+                # If we can't find a JSON object, the command failed in a different way.
+                report_lines.append("Could not find a valid JSON report in the scanner's output.")
+                if full_output.strip():
+                     report_lines.append(f"Debug Info: {full_output.strip()}")
+
+        except json.JSONDecodeError:
+            report_lines.append("Could not generate a vulnerability report due to a parsing error.")
+            report_lines.append(f"Debug Info: {full_output.strip()}")
+
+
+        return "\n".join(report_lines)
+
     except FileNotFoundError:
         return "Error: 'safety' command not found. Please run 'pip install safety'."
-    except json.JSONDecodeError:
-        report_lines.append("✅ No known security vulnerabilities found (non-JSON response from 'safety').")
     except Exception as e:
-        return f"An unexpected error occurred during safety scan: {e}"
-    return "\n".join(report_lines)
+        return f"An unexpected error occurred during the safety scan: {e}"
+
 
 def check_for_typosquatting(packages):
     """Checks a set of package names for common typosquatting patterns."""
@@ -56,6 +76,7 @@ def check_for_typosquatting(packages):
         for common in common_packages:
             if pkg_name != common and (common in pkg_name or pkg_name in common):
                 potential_typos.append(f"'{pkg_name}' is similar to '{common}'. Please verify it is not a typosquatting attempt.")
+
     if potential_typos:
         report_lines.append("⚠️ Potential typosquatting threats found:")
         report_lines.extend([f"  - {p}" for p in potential_typos])
@@ -80,4 +101,3 @@ if __name__ == "__main__":
         sys.exit(1)
     file_path = sys.argv[1]
     print(scan_dependency_file(file_path))
-
