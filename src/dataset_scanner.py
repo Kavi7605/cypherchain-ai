@@ -53,13 +53,14 @@ def scan_dataframe(df, info):
                 info["security_findings"].append(f"Malicious keyword in '{col}', row {idx}: {v}")
 
     for col in df.select_dtypes(include="number").columns:
-        # **FIXED LOGIC**: Check for extreme spread, which is a strong indicator of poisoning.
-        # A high standard deviation relative to the mean suggests a bimodal distribution.
-        if not df[col].empty:
-            std_dev = df[col].std()
-            mean_val = df[col].mean()
-            if std_dev > mean_val and mean_val != 0:
-                info["security_findings"].append(f"Possible data poisoning: extreme outliers in '{col}'")
+        q1 = df[col].quantile(0.25)
+        q3 = df[col].quantile(0.75)
+        iqr = q3 - q1
+        lower_bound = q1 - 1.5 * iqr
+        upper_bound = q3 + 1.5 * iqr
+        outliers = df[(df[col] < lower_bound) | (df[col] > upper_bound)]
+        if not outliers.empty:
+            info["security_findings"].append(f"Possible data poisoning: extreme outliers in '{col}'")
 
 def get_file_info(file_path):
     if not os.path.exists(file_path):
