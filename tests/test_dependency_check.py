@@ -1,6 +1,6 @@
 import os
 import pytest
-from src.dependency_check import scan_project_dependencies
+from src.dependency_check import scan_dependency_file
 
 @pytest.fixture
 def project_dir(tmp_path):

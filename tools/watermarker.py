@@ -2,6 +2,9 @@ import json
 import hashlib
 import datetime
 import argparse
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
 
 # A unique sequence of bytes to identify the start of our watermark block
 WATERMARK_MAGIC = b"##CYPHERCHAIN_WM##"
