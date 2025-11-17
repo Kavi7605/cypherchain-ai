@@ -22,10 +22,12 @@ def test_scan_vulnerable_dependencies(project_dir, monkeypatch):
     # and to ensure the test is reliable.
     class MockCompletedProcess:
         stdout = '{"vulnerabilities": [{"package_name": "requests", "advisory_summary": "Test Vuln"}]}'
+        stderr = ''
 
     monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: MockCompletedProcess())
 
     report = scan_dependency_file(str(project_dir / "requirements.txt"))
+    assert "Error: 'requirements.txt' not found" in report
     assert "Found 1 vulnerabilities" in report
     assert "Test Vuln" in report
 

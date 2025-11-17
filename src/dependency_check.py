@@ -87,7 +87,7 @@ def check_for_typosquatting(packages):
 def scan_dependency_file(requirements_path):
     """The main function to scan a specific requirements.txt file."""
     if not os.path.exists(requirements_path):
-        return f"Error: File not found:\n{requirements_path}"
+        return "Error: 'requirements.txt' not found"
 
     safety_report = run_safety_check(requirements_path)
     packages = parse_requirements(requirements_path)
