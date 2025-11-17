@@ -92,17 +92,15 @@ def get_file_info(file_path):
 
         info["details"] = {"columns": list(df.columns), "rows": len(df)}
         info["details"] = {"columns": list(df.columns), "rows": len(df)}
-
-        # Outlier detection for data poisoning
+        # Data poisoning outlier detection (ADD this code)
+        # Data poisoning outlier detection (ADD this code)
         for col in df.select_dtypes(include='number').columns:
             std = df[col].std()
             if std > 0:
                 z = ((df[col] - df[col].mean()) / std).abs()
-                # If more than 3 values are VERY far from mean, flag possible poisoning
                 if (z > 4).sum() > 3:
-                    info["security_findings"].append(
-                        f"Possible data poisoning: extreme outliers detected in column '{col}'"
-                    )
+                    info["security_findings"].append("Possible data poisoning: extreme outliers detected")
+
         scan_dataframe(df, info)
     except Exception as e:
         info["security_findings"].append(f"Error scanning file: {str(e)}")
